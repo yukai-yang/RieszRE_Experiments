@@ -8,7 +8,8 @@ library(dplyr)
 # Function to generate block dependencies
 generate_blocks <- function(n, d) {
   B <- floor(n^(1 - d))
-  block_ids <- sample(rep(1:B, length.out = n))
+  block_ids <- rep(1:B, each = ceiling(n/B))[1:n]
+  block_ids <- sample(block_ids)
   return(block_ids)
 }
 
@@ -21,28 +22,32 @@ simulate_data <- function(n, d, sigma2 = 1) {
   nu <- rnorm(n, mean = 0, sd = 1)
   
   alpha <- rnorm(n)
-  beta <- rnorm(n)
+  beta <- 1 + rnorm(n)
   delta <- rnorm(n)
   x <- rnorm(n)
-  z <- rbinom(n, size = 1, prob = 0.5)
+  z <- sample(c(0, 1), n, replace = TRUE)
   
   eps <- gamma * eta_b[block_ids] + nu
-  y <- alpha + beta * z + delta * z * x + eps
-  y1 <- alpha + beta * 1 + delta * 1 * x + gamma * eta_b[block_ids] + nu
-  y0 <- alpha + beta * 0 + delta * 0 * x + gamma * eta_b[block_ids] + nu
-  tau <- mean(y1 - y0)
+  y1 <- alpha + delta * x + eps + beta
+  y0 <- alpha + delta * x + eps
+  theta <- y1 - y0
   
-  list(y = y, z = z, x = x, tau = tau, block_ids = block_ids)
+  y = y1*z + y0*(1-z)
+  
+  # power
+  #list(y = y, y1 = y1, y0 = y0, z = z, x = x, theta = 0, block_ids = block_ids)
+  # size
+  list(y = y, y1 = y1, y0 = y0, z = z, x = x, theta = theta, block_ids = block_ids)
 }
 
 # Compute Riesz estimator with plug-in variance (Equation 4.3)
-compute_riesz_plugin <- function(y, z, block_ids) {
+compute_riesz_plugin <- function(y, z, theta, block_ids) {
   n <- length(y)
   mu1 <- mean(z)
   mu0 <- 1 - mu1
   psi <- (z / mu1) - ((1 - z) / mu0)
   tau_hat <- mean(y * psi)
-  zeta <- y * psi - tau_hat
+  zeta <- y * psi - theta
   E_n <- which(outer(block_ids, block_ids, FUN = "=="), arr.ind = TRUE)
   nu <- rep(1 / n, n)
   sigma2_hat <- sum(nu[E_n[,1]] * nu[E_n[,2]] * zeta[E_n[,1]] * zeta[E_n[,2]])
@@ -55,8 +60,8 @@ run_simulation <- function(n, d, reps = 2000) {
   results <- data.frame(riesz = numeric(reps), riesz_se = numeric(reps), tau = numeric(reps))
   for (r in 1:reps) {
     data <- simulate_data(n, d)
-    r_est <- compute_riesz_plugin(data$y, data$z, data$block_ids)
-    results[r, ] <- c(r_est$tau_hat, r_est$se_hat, data$tau)
+    r_est <- compute_riesz_plugin(data$y, data$z, data$theta, data$block_ids)
+    results[r, ] <- c(r_est$tau_hat, r_est$se_hat, mean(data$theta))
   }
   results$riesz_std <- (results$riesz - results$tau) / results$riesz_se
   results$coverage_riesz <- as.numeric(abs(results$riesz - results$tau) <= 1.96 * results$riesz_se)
